@@ -10,14 +10,39 @@
 #include <assert.h>
 
 static bool windowAlive = true;
-static int width = 512;
-static int height = 512;
+static int width = 1024;
+static int h_width = width / 2;
+static int height = 1024;
+static int h_height = height / 2;
 static Renderer renderer;
 
 static LRESULT CALLBACK mainWindowCallback(HWND windowHandle, UINT messageID, WPARAM wParam, LPARAM lParam)
 {
 	if (messageID == WM_CLOSE)
 		windowAlive = false;
+	else if (messageID == WM_LBUTTONDOWN)
+	{
+		POINT pt;
+		GetCursorPos(&pt);
+		ScreenToClient(windowHandle, &pt);
+		pt.x -= h_width;
+		pt.y -= h_height;
+		pt.y = -pt.y;
+		if (renderer.is_drawing_line())
+			renderer.end_line(pt.x, pt.y);
+		else
+			renderer.start_line(pt.x, pt.y);
+	}
+	else if (renderer.is_drawing_line() && messageID == WM_MOUSEMOVE)
+	{
+		POINT pt;
+		GetCursorPos(&pt);
+		ScreenToClient(windowHandle, &pt);
+		pt.x -= h_width;
+		pt.y -= h_height;
+		pt.y = -pt.y;
+		renderer.line_endpoint(pt.x, pt.y);
+	}
 
 	return DefWindowProc(windowHandle, messageID, wParam, lParam);
 }

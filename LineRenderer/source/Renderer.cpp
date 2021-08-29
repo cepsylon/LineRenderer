@@ -2,9 +2,16 @@
 
 #include <stdio.h>
 #include <string>
+#include <random>
+#include <time.h>
 
 void Renderer::initialize(int width, int height)
 {
+	srand(time(0));
+	mR = static_cast<float>(rand()) / RAND_MAX;
+	mG = static_cast<float>(rand()) / RAND_MAX;
+	mB = static_cast<float>(rand()) / RAND_MAX;
+
 	// Create texture for framebuffer
 	glGenTextures(1, &mFramebufferTexture);
 	glBindTexture(GL_TEXTURE_2D, mFramebufferTexture);
@@ -12,7 +19,7 @@ void Renderer::initialize(int width, int height)
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 
 	// Create framebuffer
 	glGenFramebuffers(1, &mFramebuffer);
@@ -27,7 +34,7 @@ void Renderer::initialize(int width, int height)
 	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 		fprintf(stdout, "Framebuffer failed to complete.\n");
 
-	glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0u);
@@ -113,7 +120,7 @@ void Renderer::initialize(int width, int height)
 		glDeleteShader(fragmentShader); fragmentShader = 0;
 
 		// Output error info
-		fprintf(stdout, "Error compiling vertex shader:\n%s\n", error_data.c_str());
+		fprintf(stdout, "Error compiling fragment shader:\n%s\n", error_data.c_str());
 	}
 
 	// Create program
@@ -138,10 +145,90 @@ void Renderer::initialize(int width, int height)
 		// Output error
 		fprintf(stdout, "Error linking program with shaders with error: %s\n", error.c_str());
 	}
-
-	// Release resources we no longer need
 	glDetachShader(mProgramToDisplay, fragmentShader);
 	glDetachShader(mProgramToDisplay, vertexShader);
+
+	// SDF program
+	GLuint fragmentSDFShader = glCreateShader(GL_FRAGMENT_SHADER);
+	const GLchar* fsdf_code =
+		"#version 330\n"
+
+		// Uniforms
+		"uniform ivec2 start;\n"
+		"uniform ivec2 end;\n"
+		"uniform vec3 color;\n"
+		"uniform float radius;\n"
+
+		"out vec4 fragColor;\n"
+
+		"float udSegment( in vec2 p, in vec2 a, in vec2 b )\n"
+		"{\n"
+		"	vec2 ba = b - a;\n"
+		"	vec2 pa = p - a;\n"
+		"	float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);\n"
+		"	return length(pa - h * ba);\n"
+		"}\n"
+
+		"void main()\n"
+		"{\n"
+		"	vec2 p = (gl_FragCoord.xy - 512.0f) / 512.0f;\n"
+
+		"	vec2 v1 = vec2(start / 512.0f);\n"
+		"	vec2 v2 = vec2(end / 512.0f);\n"
+		"	float d = udSegment(p, v1, v2) - radius;\n"
+
+		"	float alpha = 1.0f - sign(d);\n"
+		// Smooth edges
+		"	alpha = mix(alpha, 1.0, 1.0 - smoothstep(0.0, 0.005, abs(d)));\n"
+
+		"	fragColor = vec4(color, alpha);\n"
+		"}";
+	glShaderSource(fragmentSDFShader, 1, &fsdf_code, 0);
+	glCompileShader(fragmentSDFShader);
+
+	// Error checking
+	compiled = 0;
+	glGetShaderiv(fragmentSDFShader, GL_COMPILE_STATUS, &compiled);
+	if (compiled == GL_FALSE)
+	{
+		// Get error string and delete shader
+		GLint error_length = 0;
+		glGetShaderiv(fragmentSDFShader, GL_INFO_LOG_LENGTH, &error_length);
+		std::string error_data;
+		error_data.resize(error_length);
+		glGetShaderInfoLog(fragmentSDFShader, error_length, &error_length, &error_data[0]);
+		glDeleteShader(fragmentSDFShader); fragmentSDFShader = 0;
+
+		// Output error info
+		fprintf(stdout, "Error compiling sdf shader:\n%s\n", error_data.c_str());
+	}
+
+	mProgramSDF = glCreateProgram();
+	glAttachShader(mProgramSDF, vertexShader);
+	glAttachShader(mProgramSDF, fragmentSDFShader);
+	glLinkProgram(mProgramSDF);
+
+	// Error checking
+	linked = 0;
+	glGetProgramiv(mProgramSDF, GL_LINK_STATUS, &linked);
+	if (linked == GL_FALSE)
+	{
+		// Get error string and delete the program
+		GLint error_length = 0;
+		glGetProgramiv(mProgramSDF, GL_INFO_LOG_LENGTH, &error_length);
+		std::string error;
+		error.resize(error_length);
+		glGetProgramInfoLog(mProgramSDF, error_length, &error_length, &error[0]);
+		glDeleteProgram(mProgramSDF); mProgramSDF = 0;
+
+		// Output error
+		fprintf(stdout, "Error linking program with shaders with error: %s\n", error.c_str());
+	}
+	glDetachShader(mProgramSDF, fragmentSDFShader);
+	glDetachShader(mProgramSDF, vertexShader);
+
+	// Release resources we no longer need
+	glDeleteShader(fragmentSDFShader);
 	glDeleteShader(fragmentShader);
 	glDeleteShader(vertexShader);
 }
@@ -149,12 +236,28 @@ void Renderer::initialize(int width, int height)
 void Renderer::render()
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0u);
+	glEnable(GL_BLEND);
+	glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+	glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 	glUseProgram(mProgramToDisplay);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, mFramebufferTexture);
-	glUniform1i(glGetUniformLocation(mFramebufferTexture, "image"), 0);
+	glUniform1i(glGetUniformLocation(mProgramToDisplay, "image"), 0);
 	glBindBuffer(GL_ARRAY_BUFFER, mPlane);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+	// If we are still drawing a line
+	if (mIsDrawingLine)
+	{
+		glEnable(GL_BLEND);
+		glUseProgram(mProgramSDF);
+		glUniform2i(glGetUniformLocation(mProgramSDF, "start"), mStartX, mStartY);
+		glUniform2i(glGetUniformLocation(mProgramSDF, "end"), mEndX, mEndY);
+		glUniform3f(glGetUniformLocation(mProgramSDF, "color"), mR, mG, mB);
+		glUniform1f(glGetUniformLocation(mProgramSDF, "radius"), mRadius);
+		glBindBuffer(GL_ARRAY_BUFFER, mPlane);
+		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	}
 }
 
 void Renderer::shutdown()
@@ -163,4 +266,24 @@ void Renderer::shutdown()
 	glDeleteBuffers(1, &mPlane);
 	glDeleteFramebuffers(1, &mFramebuffer);
 	glDeleteTextures(1, &mFramebufferTexture);
+}
+
+void Renderer::end_line(int x, int y)
+{
+	mIsDrawingLine = false;
+
+	// Render finished line to static image so we don't have to compute it every time
+	glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
+	glUseProgram(mProgramSDF);
+	glUniform2i(glGetUniformLocation(mProgramSDF, "start"), mStartX, mStartY);
+	glUniform2i(glGetUniformLocation(mProgramSDF, "end"), mEndX, mEndY);
+	glUniform3f(glGetUniformLocation(mProgramSDF, "color"), mR, mG, mB);
+	glUniform1f(glGetUniformLocation(mProgramSDF, "radius"), mRadius);
+	glBindBuffer(GL_ARRAY_BUFFER, mPlane);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	mR = static_cast<float>(rand()) / RAND_MAX;
+	mG = static_cast<float>(rand()) / RAND_MAX;
+	mB = static_cast<float>(rand()) / RAND_MAX;
 }
