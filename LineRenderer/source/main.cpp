@@ -1,3 +1,5 @@
+#include "Renderer.h"
+
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
@@ -10,6 +12,7 @@
 static bool windowAlive = true;
 static int width = 512;
 static int height = 512;
+static Renderer renderer;
 
 static LRESULT CALLBACK mainWindowCallback(HWND windowHandle, UINT messageID, WPARAM wParam, LPARAM lParam)
 {
@@ -39,13 +42,13 @@ int main()
 
 	// Compute window size
 	RECT windowRect = { 0, 0, width, height };
-	AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
+	AdjustWindowRect(&windowRect, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE);
 
 	// Create window
 	HWND windowHandle = CreateWindow(
 		windowClassEx.lpszClassName,
 		"mainWindow",
-		WS_OVERLAPPEDWINDOW,
+		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
 		0, 0,
 		windowRect.right - windowRect.left, windowRect.bottom - windowRect.top,
 		NULL, NULL, windowClassEx.hInstance, NULL
@@ -91,8 +94,8 @@ int main()
 	// Version for OpenGL
 	int attributes[] =
 	{
-		WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
-		WGL_CONTEXT_MINOR_VERSION_ARB, 5,
+		WGL_CONTEXT_MAJOR_VERSION_ARB, 2,
+		WGL_CONTEXT_MINOR_VERSION_ARB, 0,
 		WGL_CONTEXT_FLAGS_ARB, 0,
 		0
 	};
@@ -107,7 +110,10 @@ int main()
 		wglMakeCurrent(render_device, glContext);
 	}
 	else
-		fprintf(stdout, "Unsupported OpenGL verion 4.5, please update your drivers");
+		fprintf(stdout, "Unsupported OpenGL verion 2.0, please update your drivers");
+
+	// Graphics initialization
+	renderer.initialize(width, height);
 
 	// Main loop
 	while (windowAlive)
@@ -119,11 +125,13 @@ int main()
 			DispatchMessage(&message);
 		}
 
-		glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT);
+		renderer.render();
 
 		SwapBuffers(render_device);
 	}
+
+	// Graphics shutdown
+	renderer.shutdown();
 
 	// Destroy OpenGL context
 	wglDeleteContext(glContext);
