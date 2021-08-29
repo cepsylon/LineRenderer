@@ -159,6 +159,8 @@ void Renderer::render()
 
 void Renderer::shutdown()
 {
+	glDeleteProgram(mProgramToDisplay);
+	glDeleteBuffers(1, &mPlane);
 	glDeleteFramebuffers(1, &mFramebuffer);
 	glDeleteTextures(1, &mFramebufferTexture);
 }
