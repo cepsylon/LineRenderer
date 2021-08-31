@@ -43,6 +43,36 @@ static LRESULT CALLBACK mainWindowCallback(HWND windowHandle, UINT messageID, WP
 		pt.y = -pt.y;
 		renderer.line_endpoint(pt.x, pt.y);
 	}
+	else if (renderer.is_drawing_line() && messageID == WM_MOUSEWHEEL)
+	{
+		float delta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam));
+		renderer.update_radius(delta);
+	}
+	else if (messageID == WM_KEYDOWN)
+	{
+		if (wParam == VK_CONTROL)
+		{
+			renderer.toggle_horizontal();
+			POINT pt;
+			GetCursorPos(&pt);
+			ScreenToClient(windowHandle, &pt);
+			pt.x -= h_width;
+			pt.y -= h_height;
+			pt.y = -pt.y;
+			renderer.line_endpoint(pt.x, pt.y);
+		}
+		else if (wParam == VK_SHIFT)
+		{
+			renderer.toggle_vertical();
+			POINT pt;
+			GetCursorPos(&pt);
+			ScreenToClient(windowHandle, &pt);
+			pt.x -= h_width;
+			pt.y -= h_height;
+			pt.y = -pt.y;
+			renderer.line_endpoint(pt.x, pt.y);
+		}
+	}
 
 	return DefWindowProc(windowHandle, messageID, wParam, lParam);
 }

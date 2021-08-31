@@ -18,16 +18,28 @@ public:
 	}
 	void line_endpoint(int x, int y)
 	{
-		mEndX = x;
-		mEndY = y;
+		mEndX = mVertical ? mStartX : x;
+		mEndY = mHorizontal ? mStartY : y;
 	}
 	void end_line(int x, int y);
 	bool is_drawing_line() const { return mIsDrawingLine; }
+	void update_radius(float delta) { mRadius += delta * 0.00001f; }
+	void toggle_horizontal() { mHorizontal = !mHorizontal; }
+	void toggle_vertical() { mVertical = !mVertical; }
 
 private:
+	void create_framebuffer(int width, int height);
+	void create_buffers();
+	void create_shaders();
+	void check_shader_compiled(int shader, const char* shader_name);
+	void check_program_linked(int program, const char* program_name);
+	void assign_random_color();
+	void render_line();
+
 	GLuint mFramebuffer = 0u;
 	GLuint mFramebufferTexture = 0u;
 	GLuint mPlane = 0u;
+	GLuint mLine = 0u;
 	GLuint mProgramToDisplay = 0u;
 	GLuint mProgramSDF = 0u;
 
@@ -40,4 +52,6 @@ private:
 	int mStartY = 0;
 	int mEndY = 0;
 	bool mIsDrawingLine = false;
+	bool mHorizontal = false;
+	bool mVertical = false;
 };

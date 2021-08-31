@@ -7,11 +7,57 @@
 
 void Renderer::initialize(int width, int height)
 {
-	srand(time(0));
-	mR = static_cast<float>(rand()) / RAND_MAX;
-	mG = static_cast<float>(rand()) / RAND_MAX;
-	mB = static_cast<float>(rand()) / RAND_MAX;
+	srand(static_cast<unsigned int>(time(0)));
+	assign_random_color();
 
+	create_framebuffer(width, height);
+	create_buffers();
+	create_shaders();
+
+	// Need to set blending for correct color merge when drawing lines
+	glEnable(GL_BLEND);
+	glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+	glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+void Renderer::render()
+{
+	// Copy cached lines to back buffer
+	glBindFramebuffer(GL_FRAMEBUFFER, 0u);
+	glUseProgram(mProgramToDisplay);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, mFramebufferTexture);
+	glUniform1i(glGetUniformLocation(mProgramToDisplay, "image"), 0);
+	glBindBuffer(GL_ARRAY_BUFFER, mPlane);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+	// Render line if we are not yet done
+	if (mIsDrawingLine)
+		render_line();
+}
+
+void Renderer::shutdown()
+{
+	glDeleteProgram(mProgramToDisplay);
+	glDeleteBuffers(1, &mPlane);
+	glDeleteFramebuffers(1, &mFramebuffer);
+	glDeleteTextures(1, &mFramebufferTexture);
+}
+
+void Renderer::end_line(int x, int y)
+{
+	mIsDrawingLine = false;
+
+	// Render finished line to static image so we don't have to compute it every time
+	glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
+	render_line();
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	assign_random_color();
+}
+
+void Renderer::create_framebuffer(int width, int height)
+{
 	// Create texture for framebuffer
 	glGenTextures(1, &mFramebufferTexture);
 	glBindTexture(GL_TEXTURE_2D, mFramebufferTexture);
@@ -38,13 +84,16 @@ void Renderer::initialize(int width, int height)
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0u);
+}
 
-	// Create plane
+void Renderer::create_buffers()
+{
+	// Plane
 	float vertices[] = {
-		-1.0f, -1.0f, 0.0f, 0.0f,	// V0
-		1.0f, -1.0f, 1.0f, 0.0f,	// V1
-		-1.0f, 1.0f, 0.0f, 1.0f,	// V2
-		1.0f, 1.0f, 1.0f, 1.0f		// V3
+		 -1.0f, -1.0f, 0.0f, 0.0f,	// V0 (2 pos, 2 uv)
+		 1.0f, -1.0f, 1.0f, 0.0f,	// V1
+		 -1.0f, 1.0f, 0.0f, 1.0f,	// V2
+		 1.0f, 1.0f, 1.0f, 1.0f		// V3
 	};
 
 	glGenBuffers(1, &mPlane);
@@ -54,50 +103,36 @@ void Renderer::initialize(int width, int height)
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
 	glEnableVertexAttribArray(1);
 	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+}
 
-	// Create shader
+void Renderer::create_shaders()
+{
 	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-	const GLchar* v_code = 
-	"#version 330\n"
-	// From input assembler
-	"layout(location = 0) in vec2 v_position;\n"
-	"layout(location = 1) in vec2 v_uv;\n"
-	// Outputs to next stage
-	"out vec2 f_uv;\n"
+	const GLchar* v_code =
+		"#version 330\n"
 
-	"void main()\n"
-	"{\n"
+		"layout(location = 0) in vec2 v_position;\n"
+		"layout(location = 1) in vec2 v_uv;\n"
+
+		"out vec2 f_uv;\n"
+
+		"void main()\n"
+		"{\n"
 		"gl_Position = vec4(v_position, 0.0f, 1.0f);\n"
 		"f_uv = v_uv;\n"
-	"}";
+		"}";
 	glShaderSource(vertexShader, 1, &v_code, 0);
 	glCompileShader(vertexShader);
-
-	// Error checking
-	GLint compiled = 0;
-	glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &compiled);
-	if (compiled == GL_FALSE)
-	{
-		// Get error string and delete shader
-		GLint error_length = 0;
-		glGetShaderiv(vertexShader, GL_INFO_LOG_LENGTH, &error_length);
-		std::string error_data;
-		error_data.resize(error_length);
-		glGetShaderInfoLog(vertexShader, error_length, &error_length, &error_data[0]);
-		glDeleteShader(vertexShader); vertexShader = 0;
-
-		// Output error info
-		fprintf(stdout, "Error compiling vertex shader:\n%s\n", error_data.c_str());
-	}
+	check_shader_compiled(vertexShader, "vertex");
 
 	GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
 	const GLchar* f_code =
 		"#version 330\n"
-		// Inputs from previous stage
+
 		"in vec2 f_uv;\n"
-		// Uniforms
+
 		"uniform sampler2D image;\n"
-		// Outputs to buffer
+
 		"out vec4 out_color;\n"
 		"void main()\n"
 		"{\n"
@@ -105,31 +140,91 @@ void Renderer::initialize(int width, int height)
 		"}";
 	glShaderSource(fragmentShader, 1, &f_code, 0);
 	glCompileShader(fragmentShader);
-
-	// Error checking
-	compiled = 0;
-	glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &compiled);
-	if (compiled == GL_FALSE)
-	{
-		// Get error string and delete shader
-		GLint error_length = 0;
-		glGetShaderiv(fragmentShader, GL_INFO_LOG_LENGTH, &error_length);
-		std::string error_data;
-		error_data.resize(error_length);
-		glGetShaderInfoLog(fragmentShader, error_length, &error_length, &error_data[0]);
-		glDeleteShader(fragmentShader); fragmentShader = 0;
-
-		// Output error info
-		fprintf(stdout, "Error compiling fragment shader:\n%s\n", error_data.c_str());
-	}
+	check_shader_compiled(fragmentShader, "copyTextureFragment");
 
 	// Create program
 	mProgramToDisplay = glCreateProgram();
 	glAttachShader(mProgramToDisplay, vertexShader);
 	glAttachShader(mProgramToDisplay, fragmentShader);
 	glLinkProgram(mProgramToDisplay);
+	check_program_linked(mProgramToDisplay, "ToDisplayProgram");
+	glDetachShader(mProgramToDisplay, fragmentShader);
+	glDetachShader(mProgramToDisplay, vertexShader);
 
-	// Error checking
+	// SDF program
+	GLuint fragmentSDFShader = glCreateShader(GL_FRAGMENT_SHADER);
+	const GLchar* fsdf_code =
+		"#version 330\n"
+
+		"uniform ivec2 start;\n"
+		"uniform ivec2 end;\n"
+		"uniform vec3 color;\n"
+		"uniform float radius;\n"
+
+		"out vec4 fragColor;\n"
+
+		"float udSegment( in vec2 p, in vec2 a, in vec2 b )\n"
+		"{\n"
+			"vec2 ba = b - a;\n"
+			"vec2 pa = p - a;\n"
+			"float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);\n"
+			"return length(pa - h * ba);\n"
+		"}\n"
+
+		"void main()\n"
+		"{\n"
+			"vec2 p = (gl_FragCoord.xy - 512.0f) / 512.0f;\n"
+
+			"vec2 v1 = vec2(start / 512.0f);\n"
+			"vec2 v2 = vec2(end / 512.0f);\n"
+			"float d = udSegment(p, v1, v2) - radius;\n"
+
+			"float alpha = 1.0f - sign(d);\n"
+			// Smooth edges
+			"alpha = mix(alpha, 1.0, 1.0 - smoothstep(0.0, 0.005, abs(d)));\n"
+
+			"fragColor = vec4(color, alpha);\n"
+		"}";
+	glShaderSource(fragmentSDFShader, 1, &fsdf_code, 0);
+	glCompileShader(fragmentSDFShader);
+	check_shader_compiled(fragmentSDFShader, "SDFFragment");
+
+	// Line rendering program
+	mProgramSDF = glCreateProgram();
+	glAttachShader(mProgramSDF, vertexShader);
+	glAttachShader(mProgramSDF, fragmentSDFShader);
+	glLinkProgram(mProgramSDF);
+	check_program_linked(mProgramSDF, "SDFProgram");
+	glDetachShader(mProgramSDF, fragmentSDFShader);
+	glDetachShader(mProgramSDF, vertexShader);
+
+	// Release resources we no longer need
+	glDeleteShader(fragmentSDFShader);
+	glDeleteShader(fragmentShader);
+	glDeleteShader(vertexShader);
+}
+
+void Renderer::check_shader_compiled(int shader, const char* shader_name)
+{
+	GLint compiled = 0;
+	glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+	if (compiled == GL_FALSE)
+	{
+		// Get error string and delete shader
+		GLint error_length = 0;
+		glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &error_length);
+		std::string error_data;
+		error_data.resize(error_length);
+		glGetShaderInfoLog(shader, error_length, &error_length, &error_data[0]);
+		glDeleteShader(shader);
+
+		// Output error info
+		fprintf(stdout, "Error compiling %s shader:\n%s\n", shader_name, error_data.c_str());
+	}
+}
+
+void Renderer::check_program_linked(int program, const char* program_name)
+{
 	GLint linked = 0;
 	glGetProgramiv(mProgramToDisplay, GL_LINK_STATUS, &linked);
 	if (linked == GL_FALSE)
@@ -143,137 +238,19 @@ void Renderer::initialize(int width, int height)
 		glDeleteProgram(mProgramToDisplay); mProgramToDisplay = 0;
 
 		// Output error
-		fprintf(stdout, "Error linking program with shaders with error: %s\n", error.c_str());
-	}
-	glDetachShader(mProgramToDisplay, fragmentShader);
-	glDetachShader(mProgramToDisplay, vertexShader);
-
-	// SDF program
-	GLuint fragmentSDFShader = glCreateShader(GL_FRAGMENT_SHADER);
-	const GLchar* fsdf_code =
-		"#version 330\n"
-
-		// Uniforms
-		"uniform ivec2 start;\n"
-		"uniform ivec2 end;\n"
-		"uniform vec3 color;\n"
-		"uniform float radius;\n"
-
-		"out vec4 fragColor;\n"
-
-		"float udSegment( in vec2 p, in vec2 a, in vec2 b )\n"
-		"{\n"
-		"	vec2 ba = b - a;\n"
-		"	vec2 pa = p - a;\n"
-		"	float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);\n"
-		"	return length(pa - h * ba);\n"
-		"}\n"
-
-		"void main()\n"
-		"{\n"
-		"	vec2 p = (gl_FragCoord.xy - 512.0f) / 512.0f;\n"
-
-		"	vec2 v1 = vec2(start / 512.0f);\n"
-		"	vec2 v2 = vec2(end / 512.0f);\n"
-		"	float d = udSegment(p, v1, v2) - radius;\n"
-
-		"	float alpha = 1.0f - sign(d);\n"
-		// Smooth edges
-		"	alpha = mix(alpha, 1.0, 1.0 - smoothstep(0.0, 0.005, abs(d)));\n"
-
-		"	fragColor = vec4(color, alpha);\n"
-		"}";
-	glShaderSource(fragmentSDFShader, 1, &fsdf_code, 0);
-	glCompileShader(fragmentSDFShader);
-
-	// Error checking
-	compiled = 0;
-	glGetShaderiv(fragmentSDFShader, GL_COMPILE_STATUS, &compiled);
-	if (compiled == GL_FALSE)
-	{
-		// Get error string and delete shader
-		GLint error_length = 0;
-		glGetShaderiv(fragmentSDFShader, GL_INFO_LOG_LENGTH, &error_length);
-		std::string error_data;
-		error_data.resize(error_length);
-		glGetShaderInfoLog(fragmentSDFShader, error_length, &error_length, &error_data[0]);
-		glDeleteShader(fragmentSDFShader); fragmentSDFShader = 0;
-
-		// Output error info
-		fprintf(stdout, "Error compiling sdf shader:\n%s\n", error_data.c_str());
-	}
-
-	mProgramSDF = glCreateProgram();
-	glAttachShader(mProgramSDF, vertexShader);
-	glAttachShader(mProgramSDF, fragmentSDFShader);
-	glLinkProgram(mProgramSDF);
-
-	// Error checking
-	linked = 0;
-	glGetProgramiv(mProgramSDF, GL_LINK_STATUS, &linked);
-	if (linked == GL_FALSE)
-	{
-		// Get error string and delete the program
-		GLint error_length = 0;
-		glGetProgramiv(mProgramSDF, GL_INFO_LOG_LENGTH, &error_length);
-		std::string error;
-		error.resize(error_length);
-		glGetProgramInfoLog(mProgramSDF, error_length, &error_length, &error[0]);
-		glDeleteProgram(mProgramSDF); mProgramSDF = 0;
-
-		// Output error
-		fprintf(stdout, "Error linking program with shaders with error: %s\n", error.c_str());
-	}
-	glDetachShader(mProgramSDF, fragmentSDFShader);
-	glDetachShader(mProgramSDF, vertexShader);
-
-	// Release resources we no longer need
-	glDeleteShader(fragmentSDFShader);
-	glDeleteShader(fragmentShader);
-	glDeleteShader(vertexShader);
-}
-
-void Renderer::render()
-{
-	glBindFramebuffer(GL_FRAMEBUFFER, 0u);
-	glEnable(GL_BLEND);
-	glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-	glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-	glUseProgram(mProgramToDisplay);
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, mFramebufferTexture);
-	glUniform1i(glGetUniformLocation(mProgramToDisplay, "image"), 0);
-	glBindBuffer(GL_ARRAY_BUFFER, mPlane);
-	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-	// If we are still drawing a line
-	if (mIsDrawingLine)
-	{
-		glEnable(GL_BLEND);
-		glUseProgram(mProgramSDF);
-		glUniform2i(glGetUniformLocation(mProgramSDF, "start"), mStartX, mStartY);
-		glUniform2i(glGetUniformLocation(mProgramSDF, "end"), mEndX, mEndY);
-		glUniform3f(glGetUniformLocation(mProgramSDF, "color"), mR, mG, mB);
-		glUniform1f(glGetUniformLocation(mProgramSDF, "radius"), mRadius);
-		glBindBuffer(GL_ARRAY_BUFFER, mPlane);
-		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+		fprintf(stdout, "Error linking %s program with shaders with error: %s\n", program_name, error.c_str());
 	}
 }
 
-void Renderer::shutdown()
+void Renderer::assign_random_color()
 {
-	glDeleteProgram(mProgramToDisplay);
-	glDeleteBuffers(1, &mPlane);
-	glDeleteFramebuffers(1, &mFramebuffer);
-	glDeleteTextures(1, &mFramebufferTexture);
+	mR = static_cast<float>(rand()) / RAND_MAX;
+	mG = static_cast<float>(rand()) / RAND_MAX;
+	mB = static_cast<float>(rand()) / RAND_MAX;
 }
 
-void Renderer::end_line(int x, int y)
+void Renderer::render_line()
 {
-	mIsDrawingLine = false;
-
-	// Render finished line to static image so we don't have to compute it every time
-	glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
 	glUseProgram(mProgramSDF);
 	glUniform2i(glGetUniformLocation(mProgramSDF, "start"), mStartX, mStartY);
 	glUniform2i(glGetUniformLocation(mProgramSDF, "end"), mEndX, mEndY);
@@ -281,9 +258,4 @@ void Renderer::end_line(int x, int y)
 	glUniform1f(glGetUniformLocation(mProgramSDF, "radius"), mRadius);
 	glBindBuffer(GL_ARRAY_BUFFER, mPlane);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-	mR = static_cast<float>(rand()) / RAND_MAX;
-	mG = static_cast<float>(rand()) / RAND_MAX;
-	mB = static_cast<float>(rand()) / RAND_MAX;
 }
