@@ -10,6 +10,8 @@ void Renderer::initialize(int width, int height)
 	srand(static_cast<unsigned int>(time(0)));
 	assign_random_color();
 
+	mHalfWidth = static_cast<float>(width) * 0.5f;
+	mHalfHeight = static_cast<float>(height) * 0.5f;
 	create_framebuffer(width, height);
 	create_buffers();
 	create_shaders();
@@ -25,10 +27,10 @@ void Renderer::render()
 	// Copy cached lines to back buffer
 	glBindFramebuffer(GL_FRAMEBUFFER, 0u);
 	glUseProgram(mProgramToDisplay);
+	bind_plane();
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, mFramebufferTexture);
 	glUniform1i(glGetUniformLocation(mProgramToDisplay, "image"), 0);
-	glBindBuffer(GL_ARRAY_BUFFER, mPlane);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
 	// Render line if we are not yet done
@@ -39,6 +41,7 @@ void Renderer::render()
 void Renderer::shutdown()
 {
 	glDeleteProgram(mProgramToDisplay);
+	glDeleteBuffers(1, &mLine);
 	glDeleteBuffers(1, &mPlane);
 	glDeleteFramebuffers(1, &mFramebuffer);
 	glDeleteTextures(1, &mFramebufferTexture);
@@ -97,16 +100,23 @@ void Renderer::create_buffers()
 	};
 
 	glGenBuffers(1, &mPlane);
-	glBindBuffer(GL_ARRAY_BUFFER, mPlane);
+	bind_plane();
 	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+	// Line
+	glGenBuffers(1, &mLine);
+	bind_line();
+	float line[] =
+	{
+		static_cast<float>(mStartX), static_cast<float>(mStartY), 
+		static_cast<float>(mEndX), static_cast<float>(mEndY)
+	};
+	glBufferData(GL_ARRAY_BUFFER, sizeof(line), line, GL_DYNAMIC_DRAW);
 }
 
 void Renderer::create_shaders()
 {
+	// SDF line program and transfer program
 	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
 	const GLchar* v_code =
 		"#version 330\n"
@@ -202,6 +212,53 @@ void Renderer::create_shaders()
 	glDeleteShader(fragmentSDFShader);
 	glDeleteShader(fragmentShader);
 	glDeleteShader(vertexShader);
+
+	//------------------------------
+	// Simple line rendering program
+	vertexShader = glCreateShader(GL_VERTEX_SHADER);
+	v_code =
+		"#version 330\n"
+
+		"layout(location = 0) in vec2 v_position;\n"
+
+		"out vec2 f_uv;\n"
+
+		"void main()\n"
+		"{\n"
+			"gl_Position = vec4(v_position, 0.0f, 1.0f);\n"
+		"}";
+	glShaderSource(vertexShader, 1, &v_code, 0);
+	glCompileShader(vertexShader);
+	check_shader_compiled(vertexShader, "vertexLine");
+
+	fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+	f_code =
+		"#version 330\n"
+
+		"in vec2 f_uv;\n"
+
+		"uniform vec3 color;\n"
+
+		"out vec4 out_color;\n"
+		"void main()\n"
+		"{\n"
+			"out_color = vec4(color, 1.0f);\n"
+		"}";
+	glShaderSource(fragmentShader, 1, &f_code, 0);
+	glCompileShader(fragmentShader);
+	check_shader_compiled(fragmentShader, "framgentLine");
+
+	mProgramSimple = glCreateProgram();
+	glAttachShader(mProgramSimple, vertexShader);
+	glAttachShader(mProgramSimple, fragmentShader);
+	glLinkProgram(mProgramSimple);
+	check_program_linked(mProgramSimple, "SDFProgram");
+	glDetachShader(mProgramSimple, fragmentShader);
+	glDetachShader(mProgramSimple, vertexShader);
+
+	// Release resources we no longer need
+	glDeleteShader(fragmentShader);
+	glDeleteShader(vertexShader);
 }
 
 void Renderer::check_shader_compiled(int shader, const char* shader_name)
@@ -251,11 +308,43 @@ void Renderer::assign_random_color()
 
 void Renderer::render_line()
 {
-	glUseProgram(mProgramSDF);
-	glUniform2i(glGetUniformLocation(mProgramSDF, "start"), mStartX, mStartY);
-	glUniform2i(glGetUniformLocation(mProgramSDF, "end"), mEndX, mEndY);
-	glUniform3f(glGetUniformLocation(mProgramSDF, "color"), mR, mG, mB);
-	glUniform1f(glGetUniformLocation(mProgramSDF, "radius"), mRadius);
+	if (mLineSimple)
+	{
+		glUseProgram(mProgramSimple);
+		bind_line();
+		float line[] =
+		{
+			static_cast<float>(mStartX) / mHalfWidth, static_cast<float>(mStartY) / mHalfHeight,
+			static_cast<float>(mEndX) / mHalfWidth, static_cast<float>(mEndY) / mHalfHeight
+		};
+		glBufferData(GL_ARRAY_BUFFER, sizeof(line), line, GL_DYNAMIC_DRAW);
+		glUniform3f(glGetUniformLocation(mProgramSimple, "color"), mR, mG, mB);
+		glDrawArrays(GL_LINES, 0, 2);
+	}
+	else
+	{
+		glUseProgram(mProgramSDF);
+		bind_plane();
+		glUniform2i(glGetUniformLocation(mProgramSDF, "start"), mStartX, mStartY);
+		glUniform2i(glGetUniformLocation(mProgramSDF, "end"), mEndX, mEndY);
+		glUniform3f(glGetUniformLocation(mProgramSDF, "color"), mR, mG, mB);
+		glUniform1f(glGetUniformLocation(mProgramSDF, "radius"), mRadius);
+		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	}
+}
+
+void Renderer::bind_plane()
+{
 	glBindBuffer(GL_ARRAY_BUFFER, mPlane);
-	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+}
+
+void Renderer::bind_line()
+{
+	glBindBuffer(GL_ARRAY_BUFFER, mLine);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
 }

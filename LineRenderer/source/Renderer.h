@@ -26,6 +26,7 @@ public:
 	void update_radius(float delta) { mRadius += delta * 0.00001f; }
 	void toggle_horizontal() { mHorizontal = !mHorizontal; }
 	void toggle_vertical() { mVertical = !mVertical; }
+	void toggle_mode() { mLineSimple = !mLineSimple; }
 
 private:
 	void create_framebuffer(int width, int height);
@@ -35,6 +36,8 @@ private:
 	void check_program_linked(int program, const char* program_name);
 	void assign_random_color();
 	void render_line();
+	void bind_plane();
+	void bind_line();
 
 	GLuint mFramebuffer = 0u;
 	GLuint mFramebufferTexture = 0u;
@@ -42,7 +45,10 @@ private:
 	GLuint mLine = 0u;
 	GLuint mProgramToDisplay = 0u;
 	GLuint mProgramSDF = 0u;
+	GLuint mProgramSimple = 0u;
 
+	float mHalfWidth = 0.0f;
+	float mHalfHeight = 0.0f;
 	float mR = 0.0f;
 	float mG = 0.0f;
 	float mB = 0.0f;
@@ -54,4 +60,5 @@ private:
 	bool mIsDrawingLine = false;
 	bool mHorizontal = false;
 	bool mVertical = false;
+	bool mLineSimple = false;
 };
