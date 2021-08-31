@@ -72,7 +72,7 @@ static LRESULT CALLBACK mainWindowCallback(HWND windowHandle, UINT messageID, WP
 			pt.y = -pt.y;
 			renderer.line_endpoint(pt.x, pt.y);
 		}
-		else if (wParam = VK_SPACE)
+		else if (wParam == VK_SPACE)
 		{
 			renderer.toggle_mode();
 		}
