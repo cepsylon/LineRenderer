@@ -13,6 +13,9 @@ Implementation details:
  be rendered directly to the cached image with all the other lines. Allows for fast
  execution at the cost of some memory.
 
+ Please refer to https://www.iquilezles.org/www/articles/distfunctions2d/distfunctions2d.htm
+ for explanation on SDF line rendering.
+
 Improvements:
  At the moment, the SDF line renderer is thought to work with a set size (1024x1024).
  Adding flexibility should not be any issue, but we would have to keep in mind that at
